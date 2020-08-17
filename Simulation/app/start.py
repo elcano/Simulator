@@ -58,9 +58,9 @@ class Application(tk.Frame):
                 popup = tk.Toplevel()
                 popup.wm_title("!")
 
-                ttk.Label(popup, text="No Devices connected, check COM Ports").grid(row=0, column=0, padx=(10), pady=(10))
-                ttk.Button(popup, text="Okay", command = popup.destroy).grid(column=0, row=1, padx=(10), pady=(10))
-
+                ttk.Label(popup, text="No Devices connected, check COM Ports, Press Okay to use custom controller").grid(row=0, column=0, padx=(10), pady=(10))
+                ttk.Button(popup, text="Okay", command = self.startElcanoSim).grid(column=0, row=1, padx=(10), pady=(10))
+                
             else:
                 #Popup window for selecting router port
                 popup = tk.Toplevel()
@@ -86,8 +86,15 @@ class Application(tk.Frame):
 
 
     def startElcanoSim(self):
-        COMPort = self.deviceDict[self.portSelected.get()]
-        simulator.main(COMPort, self.IPEntry.get(), int(self.portEntry.get()))
+        try:
+            COMPort = self.deviceDict[self.portSelected.get()]
+            simulator.main(COMPort, self.IPEntry.get(), int(self.portEntry.get()))
+
+        except:
+            print('No port connected! Using custom controller')
+            simulator.main('COM7', self.IPEntry.get(), int(self.portEntry.get()), 'custom_controller')
+
+        
     
 
 

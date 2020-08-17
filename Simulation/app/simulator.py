@@ -27,7 +27,7 @@ CARLA open-source simulator can be found here: http://Carla.org/
 
 '''
 
-#External imports
+# External imports
 import sys
 import logging
 import pygame
@@ -37,15 +37,17 @@ import math
 import os
 import numpy as np
 import weakref
+from pygame.locals import K_r
+from pygame.locals import K_p
 
-
-#Local imports
+# Local imports
 import Carla
 from Carla import ColorConverter as cc
 import Elcano
+from Elcano import custom_controller
 
 
-def main(COMPort = 'COM7', host = 'localhost', port = 2000):
+def main(COMPort='COM7', host='localhost', port=2000, select_controller='default'):
     """
     Take in settings from form or command line, start logging, build client object
     enter control loop
@@ -56,35 +58,43 @@ def main(COMPort = 'COM7', host = 'localhost', port = 2000):
     Port - Port on the host to connect to (Default = 2000)
     """
 
-    #Set logging level
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+    # Set logging level
+    logging.basicConfig(
+        format='%(levelname)s: %(message)s', level=logging.INFO)
     logging.info('listening to server %s:%s', host, port)
 
-    #Initialize some important variables
+    # Initialize some important variables
     client = None
     controller = None
 
     try:
-        #Create client object to interact with server
+        # Create client object to interact with server
         client = Client(host, port)
         client.connectToVehicle()
+        print('success')
 
-        #Define the controller of the vehicle
-        #Intend to add the option for manual control here later with a given param
-        controller = Elcano.RouterboardInterface(COMPort, client.vehicle)
+        # Define the controller of the vehicle
+        # Intend to add the option for manual control here later with a given param
+        if select_controller == 'custom_controller':
+            controller = custom_controller.Autopilot(client.vehicle, False)
+        else:
+            controller = Elcano.RouterboardInterface(COMPort, client.vehicle)
 
-        #Give it one second to catch up, I find without this sometimes I will run into issues
+        # Give it one second to catch up, I find without this sometimes I will run into issues
         time.sleep(1)
 
-        #Continously render
+        # Continously render
         while True:
             client.clock.tick_busy_loop(60)
             client.render()
+            try:
+                controller.mainloop(client.getKeys(), client.states)
+            except:
+                print("Unexpected error:", sys.exc_info())
+                raise
 
-
-
-    finally: 
-        #Once we are done, destroy the client and controller
+    finally:
+        # Once we are done, destroy the client and controller
         if client is not None:
             client.destroy()
 
@@ -92,10 +102,6 @@ def main(COMPort = 'COM7', host = 'localhost', port = 2000):
             controller.destroy()
 
         return
-        
-        
-
-
 
 
 # ==============================================================================
@@ -114,63 +120,73 @@ class Client(object):
     """
 
     def __init__(self, host, port):
-        
-        #Initialize some variables
+
+        # Initialize some variables
         self.camera_manager = None
         self.vehicle = None
 
-        #Attempt to connect to the Carla server, timeout after 5 seconds
+        # Attempt to connect to the Carla server, timeout after 5 seconds
         self.client = Carla.Client(host, port)
         self.client.set_timeout(5.0)
 
-        #Start pygame and build window and hud
+        # Start pygame and build window and hud
         pygame.init()
         pygame.font.init()
 
-        self.display = pygame.display.set_mode((1280, 720), pygame.HWSURFACE | pygame.DOUBLEBUF)
+        self.display = pygame.display.set_mode(
+            (1280, 720), pygame.HWSURFACE | pygame.DOUBLEBUF)
         self.clock = pygame.time.Clock()
-        self.hud = HUD(1280,720)
+        self.hud = HUD(1280, 720)
 
-        #Get the world from the server
+        # Get the world from the server
         self.world = self.client.get_world()
         self.world.on_tick(self.hud.on_world_tick)
 
-
-        
-
+        #vehicle states
+        self.states = {'autopilot_engaged' : False,
+                         'reverse_engaged' : False,
+                         'destination_set' : False}
 
     def connectToVehicle(self):
 
-        #Create the vehicle
+        # Create the vehicle
         self.vehicle = Elcano.SimulatedVehicle(self.world)
 
-        #Create the camera for the client
-        self.camera_manager = CameraManager(self.vehicle.actor, self.world, self.hud, 2.2)
+        # Create the camera for the client
+        self.camera_manager = CameraManager(
+            self.vehicle.actor, self.world, self.hud, 2.2)
         self.camera_manager.transform_index = 0
         self.camera_manager.set_sensor(0, notify=False)
-        
-        #Recording variables
+
+        # Recording variables
         self.recording_enabled = False
         self.recording_start = 0
 
     def render(self):
 
-        #Update hud with latest values
+        # Update hud with latest values
         self.hud.tick(self.world, self.vehicle, self.clock)
 
-        #Render our camera and hud
+        # Render our camera and hud
         self.camera_manager.render(self.display)
         self.hud.render(self.display)
 
-        #Update the screen
+        # Update the screen
         pygame.display.flip()
 
-        #Read events from pygame window
-        for event in pygame.event.get(): 
-            if event.type == pygame.QUIT: 
+        # Read events from pygame window
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
                 pygame.quit()
-                return
+                return 
+            elif event.type == pygame.KEYUP:
+                if event.key == K_r:
+                    self.states['reverse_engaged'] = not self.states['reverse_engaged']
+                elif event.key == K_p:
+                    self.states['autopilot_engaged'] = not self.states['autopilot_engaged']
 
+    def getKeys(self):
+        return pygame.key.get_pressed()
 
     def destroy(self):
         """
@@ -190,7 +206,6 @@ class Client(object):
 
 
 class HUD(object):
-    
 
     def __init__(self, width, height):
         self.dim = (width, height)
@@ -224,7 +239,7 @@ class HUD(object):
         v = vehicle.actor.get_velocity()
         c = vehicle.actor.get_control()
 
-        #Handling compass from IMU
+        # Handling compass from IMU
         compass = vehicle.IMUSensor.compass
         heading = 'N' if compass > 270.5 or compass < 89.5 else ''
         heading += 'S' if 90.5 < compass < 269.5 else ''
@@ -236,14 +251,19 @@ class HUD(object):
             'Client:  % 16.0f FPS' % clock.get_fps(),
             '',
             'Vehicle: % 20s' % "Elcano",
-            'Simulation time: % 12s' % datetime.timedelta(seconds=int(self.simulation_time)),
+            'Simulation time: % 12s' % datetime.timedelta(
+                seconds=int(self.simulation_time)),
             '',
-            'Speed:   % 15.0f km/h' % (3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)),
+            'Speed:   % 15.0f km/h' % (3.6 *
+                                       math.sqrt(v.x**2 + v.y**2 + v.z**2)),
             u'Compass:% 17.0f\N{DEGREE SIGN} % 2s' % (compass, heading),
-            'Accelero: (%5.1f,%5.1f,%5.1f)' % (vehicle.IMUSensor.accelerometer),
+            'Accelero: (%5.1f,%5.1f,%5.1f)' % (
+                vehicle.IMUSensor.accelerometer),
             'Gyroscop: (%5.1f,%5.1f,%5.1f)' % (vehicle.IMUSensor.gyroscope),
-            'Location:% 20s' % ('(% 5.1f, % 5.1f)' % (t.location.x, t.location.y)),
-            'GNSS:% 24s' % ('(% 2.6f, % 3.6f)' % (vehicle.GNSSSensor.latitude, vehicle.GNSSSensor.longitude)),
+            'Location:% 20s' % ('(% 5.1f, % 5.1f)' %
+                                (t.location.x, t.location.y)),
+            'GNSS:% 24s' % ('(% 2.6f, % 3.6f)' % (
+                vehicle.GNSSSensor.latitude, vehicle.GNSSSensor.longitude)),
             'Height:  % 18.0f m' % t.location.z,
             '']
 
@@ -261,7 +281,6 @@ class HUD(object):
             self._info_text += [
                 ('Speed:', c.speed, 0.0, 5.556),
                 ('Jump:', c.jump)]
-
 
     def toggle_info(self):
         self._show_info = not self._show_info
@@ -285,26 +304,35 @@ class HUD(object):
                     break
                 if isinstance(item, list):
                     if len(item) > 1:
-                        points = [(x + 8, v_offset + 8 + (1.0 - y) * 30) for x, y in enumerate(item)]
-                        pygame.draw.lines(display, (255, 136, 0), False, points, 2)
+                        points = [(x + 8, v_offset + 8 + (1.0 - y) * 30)
+                                  for x, y in enumerate(item)]
+                        pygame.draw.lines(
+                            display, (255, 136, 0), False, points, 2)
                     item = None
                     v_offset += 18
                 elif isinstance(item, tuple):
                     if isinstance(item[1], bool):
-                        rect = pygame.Rect((bar_h_offset, v_offset + 8), (6, 6))
-                        pygame.draw.rect(display, (255, 255, 255), rect, 0 if item[1] else 1)
+                        rect = pygame.Rect(
+                            (bar_h_offset, v_offset + 8), (6, 6))
+                        pygame.draw.rect(display, (255, 255, 255),
+                                         rect, 0 if item[1] else 1)
                     else:
-                        rect_border = pygame.Rect((bar_h_offset, v_offset + 8), (bar_width, 6))
-                        pygame.draw.rect(display, (255, 255, 255), rect_border, 1)
+                        rect_border = pygame.Rect(
+                            (bar_h_offset, v_offset + 8), (bar_width, 6))
+                        pygame.draw.rect(
+                            display, (255, 255, 255), rect_border, 1)
                         f = (item[1] - item[2]) / (item[3] - item[2])
                         if item[2] < 0.0:
-                            rect = pygame.Rect((bar_h_offset + f * (bar_width - 6), v_offset + 8), (6, 6))
+                            rect = pygame.Rect(
+                                (bar_h_offset + f * (bar_width - 6), v_offset + 8), (6, 6))
                         else:
-                            rect = pygame.Rect((bar_h_offset, v_offset + 8), (f * bar_width, 6))
+                            rect = pygame.Rect(
+                                (bar_h_offset, v_offset + 8), (f * bar_width, 6))
                         pygame.draw.rect(display, (255, 255, 255), rect)
                     item = item[0]
                 if item:  # At this point has to be a str.
-                    surface = self._font_mono.render(item, True, (255, 255, 255))
+                    surface = self._font_mono.render(
+                        item, True, (255, 255, 255))
                     display.blit(surface, (8, v_offset))
                 v_offset += 18
         self._notifications.render(display)
@@ -347,12 +375,14 @@ class FadingText(object):
 
 class HelpText(object):
     """Helper class to handle text output using pygame"""
+
     def __init__(self, font, width, height):
         lines = __doc__.split('\n')
         self.font = font
         self.line_space = 18
         self.dim = (780, len(lines) * self.line_space + 12)
-        self.pos = (0.5 * width - 0.5 * self.dim[0], 0.5 * height - 0.5 * self.dim[1])
+        self.pos = (0.5 * width - 0.5 *
+                    self.dim[0], 0.5 * height - 0.5 * self.dim[1])
         self.seconds_left = 0
         self.surface = pygame.Surface(self.dim)
         self.surface.fill((0, 0, 0, 0))
@@ -391,26 +421,30 @@ class CameraManager(object):
         Attachment = Carla.AttachmentType
 
         self._camera_transforms = [
-            (Carla.Transform(Carla.Location(x=-5.5, z=2.5), Carla.Rotation(pitch=8.0)), Attachment.SpringArm),
+            (Carla.Transform(Carla.Location(x=-5.5, z=2.5),
+                             Carla.Rotation(pitch=8.0)), Attachment.SpringArm),
             (Carla.Transform(Carla.Location(x=1.6, z=1.7)), Attachment.Rigid),
             (Carla.Transform(Carla.Location(x=5.5, y=1.5, z=1.5)), Attachment.SpringArm),
-            (Carla.Transform(Carla.Location(x=-8.0, z=6.0), Carla.Rotation(pitch=6.0)), Attachment.SpringArm),
+            (Carla.Transform(Carla.Location(x=-8.0, z=6.0),
+                             Carla.Rotation(pitch=6.0)), Attachment.SpringArm),
             (Carla.Transform(Carla.Location(x=-1, y=-bound_y, z=0.5)), Attachment.Rigid)]
         self.transform_index = 1
         self.sensors = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB', {}],
             ['sensor.camera.depth', cc.Raw, 'Camera Depth (Raw)', {}],
             ['sensor.camera.depth', cc.Depth, 'Camera Depth (Gray Scale)', {}],
-            ['sensor.camera.depth', cc.LogarithmicDepth, 'Camera Depth (Logarithmic Gray Scale)', {}],
-            ['sensor.camera.semantic_segmentation', cc.Raw, 'Camera Semantic Segmentation (Raw)', {}],
+            ['sensor.camera.depth', cc.LogarithmicDepth,
+                'Camera Depth (Logarithmic Gray Scale)', {}],
+            ['sensor.camera.semantic_segmentation', cc.Raw,
+                'Camera Semantic Segmentation (Raw)', {}],
             ['sensor.camera.semantic_segmentation', cc.CityScapesPalette,
                 'Camera Semantic Segmentation (CityScapes Palette)', {}],
             ['sensor.lidar.ray_cast', None, 'Lidar (Ray-Cast)', {}],
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB Distorted',
                 {'lens_circle_multiplier': '3.0',
-                'lens_circle_falloff': '3.0',
-                'chromatic_aberration_intensity': '0.5',
-                'chromatic_aberration_offset': '0'}]]
+                 'lens_circle_falloff': '3.0',
+                 'chromatic_aberration_intensity': '0.5',
+                 'chromatic_aberration_offset': '0'}]]
         bp_library = world.get_blueprint_library()
 
         for item in self.sensors:
@@ -429,13 +463,15 @@ class CameraManager(object):
         self.index = None
 
     def toggle_camera(self):
-        self.transform_index = (self.transform_index + 1) % len(self._camera_transforms)
+        self.transform_index = (self.transform_index +
+                                1) % len(self._camera_transforms)
         self.set_sensor(self.index, notify=False, force_respawn=True)
 
     def set_sensor(self, index, notify=True, force_respawn=False):
         index = index % len(self.sensors)
         needs_respawn = True if self.index is None else \
-            (force_respawn or (self.sensors[index][2] != self.sensors[self.index][2]))
+            (force_respawn or (self.sensors[index]
+                               [2] != self.sensors[self.index][2]))
         if needs_respawn:
             if self.sensor is not None:
                 self.sensor.destroy()
@@ -446,9 +482,9 @@ class CameraManager(object):
                 attach_to=self.actor,
                 attachment_type=self._camera_transforms[self.transform_index][1])
 
-
             weak_self = weakref.ref(self)
-            self.sensor.listen(lambda image: CameraManager._parse_image(weak_self, image))
+            self.sensor.listen(
+                lambda image: CameraManager._parse_image(weak_self, image))
         if notify:
             self.hud.notification(self.sensors[index][2])
         self.index = index
@@ -458,7 +494,8 @@ class CameraManager(object):
 
     def toggle_recording(self):
         self.recording = not self.recording
-        self.hud.notification('Recording %s' % ('On' if self.recording else 'Off'))
+        self.hud.notification('Recording %s' %
+                              ('On' if self.recording else 'Off'))
 
     def render(self, display):
         if self.surface is not None:
@@ -479,7 +516,7 @@ class CameraManager(object):
             lidar_data = lidar_data.astype(np.int32)
             lidar_data = np.reshape(lidar_data, (-1, 2))
             lidar_img_size = (self.hud.dim[0], self.hud.dim[1], 3)
-            lidar_img = np.zeros((lidar_img_size), dtype = int)
+            lidar_img = np.zeros((lidar_img_size), dtype=int)
             lidar_img[tuple(lidar_data.T)] = (255, 255, 255)
             self.surface = pygame.surfarray.make_surface(lidar_img)
         else:
@@ -493,7 +530,7 @@ class CameraManager(object):
             image.save_to_disk('_out/%08d' % image.frame)
 
 
-#If running the script internally this will just point it to main.
+# If running the script internally this will just point it to main.
 if __name__ == '__main__':
 
     main()
