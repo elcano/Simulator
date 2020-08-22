@@ -2,8 +2,10 @@ import math
 import Carla
 import weakref
 import pygame
+import numpy as np
 
-
+IMG_WIDTH = 640
+IMG_HEIGHT = 480
 
 class SimulatedVehicle:
     """
@@ -24,6 +26,7 @@ class SimulatedVehicle:
         self.throttle = 0
         self.steering = 0
         self.braking = 0
+        self.reverse = False
 
 
         #Load Carlas blueprint library
@@ -39,7 +42,7 @@ class SimulatedVehicle:
         # Set up the sensors.
         self.GNSSSensor = GNSSSensor(self.world, self.actor)
         self.IMUSensor = IMUSensor(self.world, self.actor)
-        
+        self.RGBSensor = RGBSensor(self.world, self.actor)
 
 
     #For destroying the vehicle in simulator
@@ -47,6 +50,7 @@ class SimulatedVehicle:
     
         self.GNSSSensor.sensor.destroy()
         self.IMUSensor.sensor.destroy()
+        self.RGBSensor.sensor.destroy()
 
         self.actor.destroy()
         
@@ -63,16 +67,20 @@ class SimulatedVehicle:
 
     def updateThrottle(self, t):
         self.throttle = t
-        self.actor.apply_control(Carla.VehicleControl(throttle=self.throttle,steer=self.steering,brake=self.braking))
+        self.actor.apply_control(Carla.VehicleControl(throttle=self.throttle,steer=self.steering,brake=self.braking,reverse=self.reverse))
 
     def updateSteering(self, s):
         
         self.steering = s
-        self.actor.apply_control(Carla.VehicleControl(throttle=self.throttle,steer=self.steering,brake=self.braking))
+        self.actor.apply_control(Carla.VehicleControl(throttle=self.throttle,steer=self.steering,brake=self.braking,reverse=self.reverse))
     
     def updateBraking(self, b):
         self.braking = b
-        self.actor.apply_control(Carla.VehicleControl(throttle=self.throttle,steer=self.steering,brake=self.braking))
+        self.actor.apply_control(Carla.VehicleControl(throttle=self.throttle,steer=self.steering,brake=self.braking,reverse=self.reverse))
+
+    def updateReverse(self, r):
+        self.reverse = r
+        self.actor.apply_control(Carla.VehicleControl(throttle=self.throttle,steer=self.steering,brake=self.braking,reverse=self.reverse))
 
 
 ################################# SENSORS  #####################################
@@ -166,5 +174,39 @@ class IMUSensor(object):
             max(limits[0], min(limits[1], math.degrees(sensor_data.gyroscope.z))))
         self.compass = math.degrees(sensor_data.compass)
         self.radiansCompass = sensor_data.compass
+
+
+# ==============================================================================
+# -- RGBSensor -----------------------------------------------------------------
+# ==============================================================================
+
+class RGBSensor(object):
+    '''
+    To process and return a frame from the RGBSensor in Carla
+    '''
+    def __init__(self, world, actor):
+
+        bp = world.get_blueprint_library().find('sensor.camera.rgb')
+        bp.set_attribute('image_size_x', str(IMG_WIDTH))
+        bp.set_attribute('image_size_y', str(IMG_HEIGHT))
+        bp.set_attribute('fov', '110')
+        self.sensor = world.spawn_actor(bp, Carla.Transform(Carla.Location(x=2.5, z=0.7)), attach_to=actor)
+
+        weak_self = weakref.ref(self)
+        self.sensor.listen(lambda raw_data: RGBSensor._process_rgb(weak_self, raw_data))
+
+    @staticmethod
+    def _process_rgb(weak_self, raw_data):
+
+        self = weak_self()
+        if not self:
+            return
+
+        raw_input = np.array(raw_data.raw_data)
+        input_frame = raw_input.reshape((IMG_HEIGHT, IMG_WIDTH, 4))
+        self.frame = input_frame[:, :, :3]
+        
+    def get_frame(self):
+        return self.frame
 
 
