@@ -45,7 +45,7 @@ Just download the repo as zip and unpack (Ensure you have the high level and low
 
 
 #### Option 1: clone, then update submodules (If you don't need the arduino code, just clone)
-git clone https://github.com/C-SELLERS/Simulator
+git clone https://github.com/elcano/Simulator
 
 cd .\Simulator\
 
@@ -55,7 +55,7 @@ git submodule update
 
 
 #### Option 2: Get repo and recursively get submodules
-git clone https://github.com/C-SELLERS/Simulator --recursive
+git clone https://github.com/elcano/Simulator --recursive
 
 
 #### Arduino Preparation (If uploading arduino code)
